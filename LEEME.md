@@ -28,16 +28,35 @@ Todo se procesa en el navegador: el video **no sale** de la computadora.
 |---|---|
 | ✋ Palma abierta | Muestra u oculta la ficha del combo |
 | 👉 Deslizar la mano abierta | Cambia de imagen |
-| 🤏 Pinza (pulgar + índice) | Agarra y mueve el producto |
-| 🤏🤏 Dos pinzas | Agranda, achica y rota |
-| ✊ Puño | Carga energía; abre la mano y explota |
+| 🤏 Pinza (pulgar + índice) | Agarra y mueve el producto **o saca una pieza** |
+| 🤏🤏 Dos pinzas | Agranda y rota (o sacas **dos piezas a la vez**, una por mano) |
+| ✊ Puño | Carga energía; abre la mano y explota (en modo Piezas desarma todo) |
 | ☝️ Índice | Dibuja con luz en el aire |
 | ✌️ Paz | Cambia de modo |
 | 👍 Pulgar arriba | Saca el número de WhatsApp |
 
-**Modos:** Combo · Efectos · Modo AR (el combo se pega a tu mano) · Rayos X.
+**Modos:** Combo · **Piezas** · Efectos · Modo AR (el combo se pega a tu mano) · Rayos X.
 
-**Teclas:** `G` guía · `S` foto · `F` pantalla completa · `M` sonido · `Espacio` modo · `←/→` imagen · `C` ficha · `W` WhatsApp.
+**Teclas:** `G` guía · `S` foto · `F` pantalla completa · `E` encuadre · `R` rearmar · `M` sonido · `Espacio` modo · `←/→` imagen · `C` ficha · `W` WhatsApp.
+
+## Modo PIEZAS (sacar pieza por pieza)
+
+Al entrar al modo, la app **despieza sola** la imagen: rellena el fondo desde los bordes
+y separa cada objeto que queda (herramienta, batería, maletín, el "2049", los regalos…).
+En las dos imágenes del combo salen **18 y 17 piezas**.
+
+- Haces **pinza sobre una pieza** y la sacas del cartel; queda un hueco oscuro en su lugar.
+- Con **las dos manos sacas dos piezas al mismo tiempo**, cada una por su lado.
+- La pieza agarrada se agranda y brilla; al soltarla se queda flotando donde la dejaste.
+- ✊ **Puño** = desarma todo de golpe. **🧩 / tecla `R`** = vuelve a armar el combo.
+- Funciona con **cualquier imagen** que cargues (botón 🖼️). Si una imagen no se puede
+  despiezar (fondo muy mezclado), la corta en cuadrícula de 16 para que igual puedas moverla.
+
+## Encuadre
+
+Botón **📐** (o tecla `E`): alterna entre
+- **Completo** (por defecto): se ve todo el cuadro de la cámara, sales entero, con las capas encima.
+- **Pantalla llena**: el video llena la pantalla recortando los bordes.
 
 ## Cambiar el combo
 

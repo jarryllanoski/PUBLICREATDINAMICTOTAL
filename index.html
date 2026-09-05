@@ -105,6 +105,8 @@ video{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
   <div class="brand">T<span>O</span>TAL <span>HANDS</span><small>Estación de gestos · Total Tools</small></div>
   <div id="tools">
     <div class="ic" id="bLegend" title="Guía de gestos (G)">✋</div>
+    <div class="ic" id="bReset"  title="Rearmar el combo (R)" style="display:none">🧩</div>
+    <div class="ic" id="bFit"    title="Encuadre: completo / pantalla llena (E)">📐</div>
     <div class="ic" id="bShot"   title="Capturar foto (S)">📸</div>
     <div class="ic" id="bLoad"   title="Cargar mis imágenes">🖼️</div>
     <div class="ic" id="bSound"  title="Sonido (M)">🔈</div>
@@ -117,6 +119,7 @@ video{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
   <h4>Gestos</h4>
   <div class="g"><i>✋</i><span><b>Palma abierta</b> · muestra u oculta la ficha</span></div>
   <div class="g"><i>🤏</i><span><b>Pinza</b> · agarra y mueve el producto</span></div>
+  <div class="g"><i>🧩</i><span><b>Modo Piezas</b> · saca cada herramienta del cartel, una con cada mano</span></div>
   <div class="g"><i>🤏🤏</i><span><b>Dos pinzas</b> · agranda y rota</span></div>
   <div class="g"><i>👉</i><span><b>Deslizar</b> mano abierta · cambia de imagen</span></div>
   <div class="g"><i>✊</i><span><b>Puño</b> · carga energía, abre para explotar</span></div>
@@ -127,6 +130,7 @@ video{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 
 <div id="modes">
   <div class="mode on" data-m="combo">Combo</div>
+  <div class="mode" data-m="piezas">Piezas</div>
   <div class="mode" data-m="efectos">Efectos</div>
   <div class="mode" data-m="ar">Modo AR</div>
   <div class="mode" data-m="rayos">Rayos X</div>
@@ -188,6 +192,8 @@ const S = {
   grab:null, stretch:null,
   charge:0, shake:0, flashT:0,
   imgs:[], loaded:false,
+  fit:"contain",                       // "contain" = sales completo · "cover" = pantalla llena
+  pieces:[], pieceCache:{}, pieceGrab:[null,null], board:{x:.5,y:.5,s:1},
 };
 
 /* ---------- Canvas ---------- */
@@ -379,11 +385,14 @@ function drawInk(){
   ctx.shadowBlur=0; ctx.globalAlpha=1; ctx.globalCompositeOperation="source-over";
 }
 
-/* ---------- Mapeo cámara → canvas (cover + espejo) ---------- */
-let MAP={sx:1,sy:1,ox:0,oy:0};
+/* ---------- Mapeo cámara → canvas (encuadre + espejo) ----------
+   "contain" muestra TODO el cuadro de la cámara (sales completo);
+   "cover" llena la pantalla recortando los bordes.                */
+let MAP={dw:1,dh:1,ox:0,oy:0};
 function calcMap(){
   const vw=video.videoWidth||16, vh=video.videoHeight||9;
-  const sc=Math.max(W/vw, H/vh), dw=vw*sc, dh=vh*sc;
+  const sc = S.fit==="cover" ? Math.max(W/vw, H/vh) : Math.min(W/vw, H/vh);
+  const dw=vw*sc, dh=vh*sc;
   MAP={ dw, dh, ox:(W-dw)/2, oy:(H-dh)/2 };
 }
 const px = n => MAP.ox + (1-n.x)*MAP.dw;   // espejo horizontal
@@ -435,25 +444,210 @@ function drawBG(){
   if(S.shake>0){ ctx.translate(rnd(-1,1)*S.shake*U()*14, rnd(-1,1)*S.shake*U()*14); S.shake*=.9; }
   if(!S.demo && video.readyState>=2){
     calcMap();
-    ctx.filter="saturate(.72) contrast(1.08) brightness(.82)";
+    // marco alrededor del video cuando no llena la pantalla
+    if(S.fit!=="cover"){
+      const g=ctx.createRadialGradient(W/2,H/2,0,W/2,H/2,Math.max(W,H)*.7);
+      g.addColorStop(0,"#0a1b24"); g.addColorStop(1,"#03080b");
+      ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+    }
+    ctx.filter="saturate(1.02) contrast(1.05) brightness(.98)";
     ctx.save(); ctx.translate(MAP.ox+MAP.dw,MAP.oy); ctx.scale(-1,1);
     ctx.drawImage(video,0,0,MAP.dw,MAP.dh); ctx.restore();
     ctx.filter="none";
+    if(S.fit!=="cover"){                      // borde neón del encuadre
+      ctx.strokeStyle="rgba(18,224,208,.45)"; ctx.lineWidth=2*U();
+      ctx.strokeRect(MAP.ox,MAP.oy,MAP.dw,MAP.dh);
+    }
   } else {
     MAP={dw:W,dh:H,ox:0,oy:0};
     const g=ctx.createRadialGradient(W/2,H*.35,0,W/2,H*.35,Math.max(W,H)*.75);
     g.addColorStop(0,"#0d2836"); g.addColorStop(1,"#040a0e");
     ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
   }
-  // rejilla + viñeta
-  ctx.globalAlpha=.06; ctx.strokeStyle="#12e0d0"; ctx.lineWidth=1;
+  // rejilla + viñeta suaves (no tapan a la persona)
+  ctx.globalAlpha=.035; ctx.strokeStyle="#12e0d0"; ctx.lineWidth=1;
   const step=70*U();
   for(let x=0;x<W;x+=step){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
   for(let y=0;y<H;y+=step){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
   ctx.globalAlpha=1;
-  const v=ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*.25,W/2,H/2,Math.max(W,H)*.72);
-  v.addColorStop(0,"rgba(0,0,0,0)"); v.addColorStop(1,"rgba(0,0,0,.72)");
+  const v=ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*.42,W/2,H/2,Math.max(W,H)*.78);
+  v.addColorStop(0,"rgba(0,0,0,0)"); v.addColorStop(1,"rgba(0,0,0,.45)");
   ctx.fillStyle=v; ctx.fillRect(0,0,W,H);
+}
+
+/* ============================================================
+   DESPIECE AUTOMÁTICO
+   Rellena el fondo desde los bordes y etiqueta lo que queda:
+   cada herramienta, batería o maletín sale como su propio sprite.
+   ============================================================ */
+function segmentImage(img){
+  const MAXD=740;
+  const w0=img.width||img.naturalWidth, h0=img.height||img.naturalHeight;
+  if(!w0||!h0) return [];
+  const sc=Math.min(1, MAXD/Math.max(w0,h0));
+  const w=Math.max(2,Math.round(w0*sc)), h=Math.max(2,Math.round(h0*sc));
+  const c=document.createElement("canvas"); c.width=w; c.height=h;
+  const x=c.getContext("2d",{willReadFrequently:true});
+  x.drawImage(img,0,0,w,h);
+  let P;
+  try{ P=x.getImageData(0,0,w,h).data; }catch(e){ return []; }
+
+  const N=w*h, bg=new Uint8Array(N), st=new Int32Array(N); let sp=0;
+  const put=i=>{ if(!bg[i]){ bg[i]=1; st[sp++]=i; } };
+  for(let i=0;i<w;i++){ put(i); put((h-1)*w+i); }
+  for(let j=0;j<h;j++){ put(j*w); put(j*w+w-1); }
+  const TOL=84;                                    // suma de |ΔR|+|ΔG|+|ΔB|
+  const near=(a,b)=>{ const i=a<<2,k=b<<2;
+    return Math.abs(P[i]-P[k])+Math.abs(P[i+1]-P[k+1])+Math.abs(P[i+2]-P[k+2]) < TOL; };
+  while(sp>0){
+    const i=st[--sp], ix=i%w, iy=(i/w)|0;
+    if(ix>0   && !bg[i-1] && near(i,i-1)) put(i-1);
+    if(ix<w-1 && !bg[i+1] && near(i,i+1)) put(i+1);
+    if(iy>0   && !bg[i-w] && near(i,i-w)) put(i-w);
+    if(iy<h-1 && !bg[i+w] && near(i,i+w)) put(i+w);
+  }
+
+  const lab=new Int32Array(N).fill(-1), comps=[];
+  for(let i=0;i<N;i++){
+    if(bg[i] || lab[i]>=0) continue;
+    const id=comps.length; let n=0, x0=w, y0=h, x1=0, y1=0;
+    sp=0; st[sp++]=i; lab[i]=id;
+    while(sp>0){
+      const k=st[--sp], kx=k%w, ky=(k/w)|0;
+      n++; if(kx<x0)x0=kx; if(kx>x1)x1=kx; if(ky<y0)y0=ky; if(ky>y1)y1=ky;
+      for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){
+        const nx=kx+dx, ny=ky+dy;
+        if(nx<0||ny<0||nx>=w||ny>=h) continue;
+        const m=ny*w+nx;
+        if(!bg[m] && lab[m]<0){ lab[m]=id; st[sp++]=m; }
+      }
+    }
+    comps.push({id,n,x0,y0,x1,y1});
+  }
+
+  const keep = comps
+    .filter(o => o.n > N*0.0009 && o.n < N*0.34 &&
+                 (o.x1-o.x0) > w*0.025 && (o.y1-o.y0) > h*0.025)
+    .sort((a,b)=>b.n-a.n).slice(0,28);
+
+  return keep.map(o=>{
+    const pw=o.x1-o.x0+1, ph=o.y1-o.y0+1;
+    const pc=document.createElement("canvas"); pc.width=pw; pc.height=ph;
+    const pg=pc.getContext("2d");
+    const out=pg.createImageData(pw,ph), O=out.data;
+    for(let yy=0;yy<ph;yy++) for(let xx=0;xx<pw;xx++){
+      const s=(o.y0+yy)*w + (o.x0+xx), d=(yy*pw+xx)<<2;
+      if(lab[s]===o.id){ const q=s<<2; O[d]=P[q]; O[d+1]=P[q+1]; O[d+2]=P[q+2]; O[d+3]=255; }
+    }
+    pg.putImageData(out,0,0);
+    return mkPiece(pc, (o.x0+pw/2)/w, (o.y0+ph/2)/h, pw/w, ph/h);
+  });
+}
+/* respaldo: si la imagen no se puede despiezar, la partimos en cuadrícula */
+function gridImage(img, n=4){
+  const w=img.width||img.naturalWidth, h=img.height||img.naturalHeight, out=[];
+  for(let j=0;j<n;j++) for(let i=0;i<n;i++){
+    const pw=Math.floor(w/n), ph=Math.floor(h/n);
+    const pc=document.createElement("canvas"); pc.width=pw; pc.height=ph;
+    pc.getContext("2d").drawImage(img, i*pw, j*ph, pw, ph, 0,0, pw, ph);
+    out.push(mkPiece(pc, (i+.5)/n, (j+.5)/n, 1/n, 1/n));
+  }
+  return out;
+}
+function mkPiece(cvs,nx,ny,nw,nh){
+  return { cvs, nx, ny, nw, nh, out:false, x:0, y:0, s:1, rot:0, held:false, bob:Math.random()*6.28 };
+}
+function buildPieces(){
+  const k=S.slide, img=S.imgs[k];
+  if(!img) return;
+  if(S.pieceCache[k]){ S.pieces=S.pieceCache[k]; return; }
+  let ps=[];
+  try{ ps=segmentImage(img); }catch(e){ console.warn("despiece",e); }
+  if(ps.length<4) ps=gridImage(img,4);
+  S.pieceCache[k]=ps; S.pieces=ps;
+  toast(ps.length+" piezas listas");
+}
+function resetPieces(){
+  S.pieces.forEach(p=>{ p.out=false; p.held=false; p.s=1; p.rot=0; });
+  S.pieceGrab=[null,null]; toast("Combo rearmado"); beep(660,.1);
+}
+function scatterPieces(){
+  S.pieces.forEach(p=>{
+    p.out=true; p.held=false;
+    p.x=W*rnd(.12,.88); p.y=H*rnd(.18,.82); p.rot=rnd(-.6,.6); p.s=rnd(.85,1.25);
+  });
+}
+/* geometría del tablero en modo PIEZAS */
+function boardBox(){
+  const base=Math.min(W,H)*.60*S.obj.s;
+  return { base, x:S.obj.x*W, y:S.obj.y*H };
+}
+function pieceHome(p,B){ return { x:B.x+(p.nx-.5)*B.base, y:B.y+(p.ny-.5)*B.base }; }
+function piecePos(p,B){ return p.out ? {x:p.x,y:p.y} : pieceHome(p,B); }
+
+function drawPiezas(){
+  const img=S.imgs[S.slide]; if(!img) return;
+  const B=boardBox(), u=U(), r=16*u;
+  // tablero
+  ctx.save();
+  ctx.shadowBlur=46*u; ctx.shadowColor="rgba(18,224,208,.45)";
+  ctx.fillStyle="#04141a"; rrect(B.x-B.base/2-6*u, B.y-B.base/2-6*u, B.base+12*u, B.base+12*u, r); ctx.fill();
+  ctx.shadowBlur=0;
+  ctx.save(); rrect(B.x-B.base/2,B.y-B.base/2,B.base,B.base,r-4*u); ctx.clip();
+  ctx.drawImage(img, B.x-B.base/2, B.y-B.base/2, B.base, B.base);
+  // huecos de las piezas que ya sacaste
+  ctx.globalCompositeOperation="source-atop";
+  for(const p of S.pieces){
+    if(!p.out) continue;
+    const hm=pieceHome(p,B), pw=p.nw*B.base, ph=p.nh*B.base;
+    ctx.fillStyle="rgba(3,10,14,.88)";
+    rrect(hm.x-pw/2, hm.y-ph/2, pw, ph, 6*u); ctx.fill();
+    ctx.strokeStyle="rgba(18,224,208,.35)"; ctx.lineWidth=1.5*u;
+    rrect(hm.x-pw/2, hm.y-ph/2, pw, ph, 6*u); ctx.stroke();
+  }
+  ctx.globalCompositeOperation="source-over";
+  ctx.restore();
+  ctx.strokeStyle="rgba(18,224,208,.7)"; ctx.lineWidth=2*u;
+  rrect(B.x-B.base/2,B.y-B.base/2,B.base,B.base,r-4*u); ctx.stroke();
+  ctx.restore();
+
+  // piezas sueltas
+  const t=performance.now()/650;
+  for(const p of S.pieces){
+    if(!p.out) continue;
+    p.hk = lerp(p.hk||1, p.held?1.16:1, .22);           // se agranda al agarrarla
+    const pw=p.nw*B.base*p.s*p.hk, ph=p.nh*B.base*p.s*p.hk;
+    const fy = p.held ? 0 : Math.sin(t+p.bob)*3*u;
+    ctx.save(); ctx.translate(p.x, p.y+fy); ctx.rotate(p.rot);
+    if(p.held){
+      ctx.globalCompositeOperation="lighter"; ctx.globalAlpha=.45;
+      const g=ctx.createRadialGradient(0,0,0,0,0,Math.max(pw,ph)*.85);
+      g.addColorStop(0,"rgba(255,194,51,.6)"); g.addColorStop(1,"rgba(255,194,51,0)");
+      ctx.fillStyle=g; ctx.beginPath(); ctx.arc(0,0,Math.max(pw,ph)*.85,0,7); ctx.fill();
+      ctx.globalCompositeOperation="source-over"; ctx.globalAlpha=1;
+    }
+    ctx.shadowBlur=(p.held?34:18)*u;
+    ctx.shadowColor=p.held?"rgba(255,194,51,.85)":"rgba(0,0,0,.65)";
+    ctx.drawImage(p.cvs, -pw/2, -ph/2, pw, ph);
+    ctx.shadowBlur=0;
+    ctx.restore();
+  }
+}
+function grabPiece(pt, hand){
+  const B=boardBox();
+  let best=null, bd=1e9;
+  for(const p of S.pieces){
+    if(p.held) continue;
+    const q=piecePos(p,B);
+    const rad=Math.max(p.nw,p.nh)*B.base*.62*p.s + 26*U();
+    const d=Math.hypot(q.x-pt.x, q.y-pt.y);
+    if(d<rad && d<bd){ bd=d; best=p; }
+  }
+  if(!best) return null;
+  const q=piecePos(best,B);
+  best.out=true; best.held=true; best.x=q.x; best.y=q.y;
+  sfx.grab(); spawn(q.x,q.y,26,{c:"#ffc233",max:5,fast:true});
+  return { p:best, dx:q.x-pt.x, dy:q.y-pt.y };
 }
 
 /* ---------- Producto flotante ---------- */
@@ -659,6 +853,7 @@ function loop(){
       const dx = hh[hh.length-1].x - hh[0].x;
       if(Math.abs(dx)>.20){
         S.slide = (S.slide + (dx>0?1:SLIDES.length-1)) % SLIDES.length;
+        if(S.mode==="piezas") buildPieces();
         cool.slide=now; hh.length=0; sfx.slide();
         toast("Imagen "+(S.slide+1)+" / "+SLIDES.length);
         spawn(P0.x,P0.y,50,{c:"#12e0d0",max:9,fast:true});
@@ -699,9 +894,28 @@ function loop(){
   });
 
   /* pinza: agarrar / estirar */
-  const pinches = pt.filter(p=>p.g==="pinch")
-    .map(p=>({ x:(px(p.h.lm[4])+px(p.h.lm[8]))/2, y:(py(p.h.lm[4])+py(p.h.lm[8]))/2 }));
-  if(S.mode!=="ar"){
+  const pinchByHand=[null,null];
+  pt.forEach(p=>{ if(p.g==="pinch")
+    pinchByHand[p.i]={ x:(px(p.h.lm[4])+px(p.h.lm[8]))/2, y:(py(p.h.lm[4])+py(p.h.lm[8]))/2 }; });
+  const pinches = pinchByHand.filter(Boolean);
+
+  /* --- modo PIEZAS: cada mano agarra su propia pieza --- */
+  if(S.mode==="piezas"){
+    for(let i=0;i<2;i++){
+      const pin=pinchByHand[i], G=S.pieceGrab[i];
+      if(pin && !G){ S.pieceGrab[i]=grabPiece(pin,i); }
+      else if(pin && G){
+        G.p.x = lerp(G.p.x, pin.x+G.dx, .5);
+        G.p.y = lerp(G.p.y, pin.y+G.dy, .5);
+        if(Math.random()<.35) spawn(G.p.x,G.p.y,1,{c:"#ffc233",max:2});
+      } else if(!pin && G){
+        G.p.held=false; S.pieceGrab[i]=null;
+        spawn(G.p.x,G.p.y,18,{c:"#12e0d0",max:4,fast:true}); beep(520,.05);
+      }
+    }
+  } else { S.pieceGrab=[null,null]; S.pieces.forEach(p=>p.held=false); }
+
+  if(S.mode!=="ar" && S.mode!=="piezas"){
     if(pinches.length>=2){
       const d=Math.hypot(pinches[0].x-pinches[1].x, pinches[0].y-pinches[1].y);
       const a=Math.atan2(pinches[1].y-pinches[0].y, pinches[1].x-pinches[0].x);
@@ -735,6 +949,7 @@ function loop(){
   stepP(); drawP();
 
   if(S.mode==="combo" || S.mode==="efectos") drawObject();
+  if(S.mode==="piezas") drawPiezas();
   if(S.mode==="ar") S.hands.forEach(drawAR);
 
   S.hands.forEach((h,i)=>drawHand(h, i? "#ff2e4d":"#12e0d0"));
@@ -751,14 +966,18 @@ function boom(x,y){
   spawn(x,y,180,{c:"#ff2e4d",max:16,fast:true,glow:1.6});
   spawn(x,y,120,{c:"#ffc233",max:11,fast:true,glow:1.6});
   spawn(x,y,90,{c:"#12e0d0",max:20,fast:true,glow:1.6});
-  S.shake=1; S.charge=0; sfx.boom(); toast("¡Potencia TOTAL!");
+  S.shake=1; S.charge=0; sfx.boom();
+  if(S.mode==="piezas"){ scatterPieces(); toast("¡Combo desarmado!"); }
+  else toast("¡Potencia TOTAL!");
 }
 
 /* ---------- Modos ---------- */
-const MODES=["combo","efectos","ar","rayos"];
+const MODES=["combo","piezas","efectos","ar","rayos"];
 function setMode(m){
   S.mode=m;
   document.querySelectorAll(".mode").forEach(e=>e.classList.toggle("on", e.dataset.m===m));
+  document.querySelector("#bReset").style.display = m==="piezas" ? "grid" : "none";
+  if(m==="piezas") buildPieces();
   toast("Modo "+m);
   sfx.mode();
 }
@@ -778,6 +997,12 @@ $("#bSound").onclick=e=>{ S.sound=!S.sound; e.currentTarget.textContent=S.sound?
 $("#bFull").onclick=()=>{ document.fullscreenElement? document.exitFullscreen() : document.documentElement.requestFullscreen?.(); };
 $("#bLoad").onclick=()=>$("#file").click();
 $("#bShot").onclick=shot;
+$("#bReset").onclick=resetPieces;
+$("#bFit").onclick=e=>{
+  S.fit = S.fit==="contain" ? "cover" : "contain";
+  e.currentTarget.classList.toggle("on", S.fit==="cover");
+  toast(S.fit==="contain" ? "Encuadre completo — sales entero" : "Pantalla llena");
+};
 $("#bCam").onclick=async()=>{
   if(S.demo) return toast("Estás en modo demo");
   try{
@@ -804,6 +1029,7 @@ async function useFiles(files){
   if(!list.length) return;
   const imgs=await Promise.all(list.map(f=>loadImg(URL.createObjectURL(f))));
   S.imgs=imgs.filter(Boolean);
+  S.pieceCache={}; S.pieces=[]; S.pieceGrab=[null,null];
   SLIDES.length=0;
   list.forEach((f,i)=>SLIDES.push({ title:"COMBO TOTAL", sub:f.name.replace(/\.[^.]+$/,""),
     specs:["Imagen cargada desde tu PC","Desliza la mano para cambiar","Pinza para mover y agrandar"] }));
@@ -822,10 +1048,12 @@ addEventListener("keydown",e=>{
   if(k==="f") $("#bFull").click();
   if(k==="m") $("#bSound").click();
   if(k===" "){ e.preventDefault(); cycleMode(); }
-  if(k==="arrowright"){ S.slide=(S.slide+1)%SLIDES.length; sfx.slide(); }
-  if(k==="arrowleft"){ S.slide=(S.slide+SLIDES.length-1)%SLIDES.length; sfx.slide(); }
+  if(k==="arrowright"){ S.slide=(S.slide+1)%SLIDES.length; if(S.mode==="piezas") buildPieces(); sfx.slide(); }
+  if(k==="arrowleft"){ S.slide=(S.slide+SLIDES.length-1)%SLIDES.length; if(S.mode==="piezas") buildPieces(); sfx.slide(); }
   if(k==="c") S.showCard=!S.showCard;
   if(k==="w") S.showWsp=!S.showWsp;
+  if(k==="r") resetPieces();
+  if(k==="e") $("#bFit").click();
 });
 /* ratón en modo demo */
 addEventListener("pointermove",e=>{
@@ -870,7 +1098,9 @@ $("#demo").onclick=()=>start(true);
 if(!isSecureContext) setStatus("Ábrelo en <b>https://</b> — el navegador no da la cámara en http.", true);
 
 /* gancho de depuración */
-window.TH = { S, setMode, spawn, boom, toast, analyze };
+window.TH = { S, setMode, spawn, boom, toast, analyze, buildPieces, resetPieces,
+  boardBox, pieceHome, piecePos,
+  toNorm:(X,Y)=>({ x:1-(X-MAP.ox)/MAP.dw, y:(Y-MAP.oy)/MAP.dh }) };
 
 loop();
 </script>
