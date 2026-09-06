@@ -45,6 +45,8 @@ video{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 #status{margin-top:22px;font-size:12.5px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase;min-height:18px}
 #status b{color:var(--teal);font-weight:500}
 .err{color:var(--red)!important}
+#saved{margin-top:12px;font-size:12.5px;color:var(--dim)}
+#saved a{color:var(--red);cursor:pointer;text-decoration:underline;margin-left:8px}
 
 /* ---------- HUD ---------- */
 .ui{position:fixed;z-index:30}
@@ -128,7 +130,9 @@ body.iron #legend h4{color:#ffb020}
     <div class="ic" id="bReset"  title="Rearmar el combo (R)" style="display:none">🧩</div>
     <div class="ic" id="bFit"    title="Encuadre: completo / pantalla llena (E)">📐</div>
     <div class="ic" id="bShot"   title="Capturar foto (S)">📸</div>
-    <div class="ic" id="bLoad"   title="Cargar mis imágenes">🖼️</div>
+    <div class="ic" id="bLoad"   title="Cargar imágenes de mi PC">🖼️</div>
+    <div class="ic" id="bFolder" title="Cargar una carpeta entera">📁</div>
+    <div class="ic on" id="bFace" title="Escáner de rostro">🙂</div>
     <div class="ic" id="bSound"  title="Sonido (M)">🔈</div>
     <div class="ic" id="bCam"    title="Cambiar cámara">🔄</div>
     <div class="ic" id="bFull"   title="Pantalla completa (F)">⛶</div>
@@ -166,6 +170,7 @@ body.iron #legend h4{color:#ffb020}
 <div id="flash"></div>
 <div id="drop">Suelta tus imágenes aquí</div>
 <input type="file" id="file" accept="image/*" multiple hidden>
+<input type="file" id="folder" accept="image/*" webkitdirectory directory multiple hidden>
 
 <div id="boot">
   <div class="logo">TOTAL<br>HANDS</div>
@@ -173,9 +178,11 @@ body.iron #legend h4{color:#ffb020}
   <p class="tag">Usa la cámara de tu PC y la IA de seguimiento de manos para presentar el <b>TRIO MALETERO DRYWALERO 5.0</b> sin tocar nada. Nada sale de tu computadora: todo se procesa aquí mismo.</p>
   <div id="bootrow">
     <button class="btn main" id="go">Encender cámara</button>
+    <button class="btn ghost" id="pick">🖼️ Cargar mis imágenes</button>
     <button class="btn ghost" id="demo">Ver sin cámara</button>
   </div>
   <div id="status">Listo para iniciar</div>
+  <div id="saved"></div>
 </div>
 
 <script type="module">
@@ -183,14 +190,15 @@ body.iron #legend h4{color:#ffb020}
    TOTAL HANDS — presentador de combos por gestos
    Total Tools / Herracast S.A.C. · totaltoolspe.com
    ============================================================ */
-import { FilesetResolver, HandLandmarker }
+import { FilesetResolver, HandLandmarker, FaceLandmarker }
   from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
 /* ---------- Datos del combo ---------- */
 const WSP = "51933724178";
 /* Lista de imágenes: la app busca combo-1.jpg … combo-8.jpg y usa las que existan.
    Para sumar imágenes basta subir combo-3.jpg, combo-4.jpg… al mismo repo.        */
-const MAX_IMGS = 8;
+const MAX_IMGS = 8;        // combo-1.jpg … combo-8.jpg
+const MAX_CARGA = 24;      // máximo de imágenes cargadas desde tu PC
 const META = [
   { title:"TRIO MALETERO DRYWALERO 5.0", sub:"Baterías, cargador y regalos",
     voz:"Trío maletero drywalero cinco punto cero. Baterías, cargador y regalos.",
@@ -224,7 +232,9 @@ const S = {
   fit:"contain",                       // "contain" = sales completo · "cover" = pantalla llena
   pieces:[], pieceCache:{}, pieceGrab:[null,null], board:{x:.5,y:.5,s:1},
   rec:{ on:false, rec:null, chunks:[], t0:0, mic:null },
-  railFor:[], dt:.016,
+  railFor:[], dt:.016, frame:0,
+  faceOn:true, faceLM:null, faceReady:false, faceLoading:false,
+  hover:null, hoverT:0,
   dual:0, panelGrab:[null,null],       // dos manos = las dos imágenes a la vez
   panels:[ {x:.27,y:.5,s:.66,rot:0,grabbed:false},
            {x:.73,y:.5,s:.66,rot:0,grabbed:false} ],
@@ -269,7 +279,60 @@ function loadImg(src){
     i.onload=()=>res(i); i.onerror=()=>res(null); i.src=src;
   });
 }
+/* ---------- Tus imágenes, guardadas en el navegador ----------
+   Lo que cargues desde tu PC queda guardado en este navegador (IndexedDB)
+   y vuelve a aparecer la próxima vez que abras la app.                    */
+const DBN="totalhands", STORE="imgs";
+function idbOpen(){
+  return new Promise((res,rej)=>{
+    const r=indexedDB.open(DBN,1);
+    r.onupgradeneeded=()=>{ if(!r.result.objectStoreNames.contains(STORE))
+      r.result.createObjectStore(STORE,{keyPath:"id",autoIncrement:true}); };
+    r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error);
+  });
+}
+async function idbTx(modo, fn){
+  try{
+    const db=await idbOpen();
+    return await new Promise((res,rej)=>{
+      const st=db.transaction(STORE,modo).objectStore(STORE);
+      const rq=fn(st); rq.onsuccess=()=>res(rq.result); rq.onerror=()=>rej(rq.error);
+    });
+  }catch(e){ return null; }
+}
+const idbAll   = ()      => idbTx("readonly",  st=>st.getAll());
+const idbClear = ()      => idbTx("readwrite", st=>st.clear());
+const idbAdd   = (reg)   => idbTx("readwrite", st=>st.add(reg));
+
+/* reduce cada imagen antes de guardarla, para que no pese */
+function shrink(img, max=1400, q=.86){
+  const w=img.naturalWidth||img.width, h=img.naturalHeight||img.height;
+  const sc=Math.min(1, max/Math.max(w,h));
+  const c=document.createElement("canvas");
+  c.width=Math.round(w*sc); c.height=Math.round(h*sc);
+  c.getContext("2d").drawImage(img,0,0,c.width,c.height);
+  return new Promise(r=>c.toBlob(b=>r(b), "image/jpeg", q));
+}
+function limpiaNombre(n){
+  return n.replace(/\.[^.]+$/,"").replace(/[-_]+/g," ").trim().slice(0,42) || "Imagen";
+}
+function metaDe(nombre, i){
+  return { title:"COMBO TOTAL", sub:nombre, voz:nombre,
+           specs:["Imagen "+(i+1)+" de tu PC","Pinza para sacarla y moverla","Puño para devolverla"] };
+}
+
 async function bootImages(){
+  /* 1) ¿hay imágenes tuyas guardadas? */
+  const guardadas = await idbAll();
+  if(guardadas && guardadas.length){
+    const imgs=[]; SLIDES.length=0;
+    for(const g of guardadas.slice(0,MAX_CARGA)){
+      const im=await loadImg(URL.createObjectURL(g.blob));
+      if(im){ imgs.push(im); SLIDES.push(metaDe(g.nombre||("Imagen "+(imgs.length)), imgs.length-1)); }
+    }
+    if(imgs.length){ S.imgs=imgs; S.loaded=true; return; }
+  }
+  /* 2) si no, las combo-N.jpg del repo */
   const found=[];
   for(let i=1;i<=MAX_IMGS;i++){
     const im = await loadImg("combo-"+i+".jpg");
@@ -313,12 +376,29 @@ function wrap(x, text, cx, cy, max, lh){
   x.fillText(line,cx,y);
 }
 
-/* ---------- Cámara + modelo ---------- */
-let landmarker=null, lastVideoTime=-1;
+/* ---------- Cámara + modelos ---------- */
+let landmarker=null, faceLandmarker=null, visionFileset=null, lastVideoTime=-1;
+async function initFace(){                       // se carga solo al entrar a IRON MAN
+  if(faceLandmarker || S.faceLoading || !visionFileset) return;
+  S.faceLoading=true; toast("Cargando escáner facial…");
+  try{
+    faceLandmarker = await FaceLandmarker.createFromOptions(visionFileset, {
+      baseOptions:{ modelAssetPath:
+        "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+        delegate:"GPU" },
+      runningMode:"VIDEO", numFaces:1,
+      outputFaceBlendshapes:false, outputFacialTransformationMatrixes:false });
+    S.faceReady=true; say("Escáner facial activo.", true);
+  }catch(e){
+    console.warn("rostro:",e); toast("No pude cargar el escáner facial");
+  }
+  S.faceLoading=false;
+}
 async function initModel(setStatus){
   setStatus("Descargando modelo de manos…");
   const fileset = await FilesetResolver.forVisionTasks(
     "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+  visionFileset = fileset;
   const opts = {
     baseOptions:{ modelAssetPath:
       "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task" },
@@ -939,12 +1019,13 @@ function hudLog(t){
 }
 
 /* --- rieles: la lista de imágenes, uno a cada lado --- */
+const RAIL_MAX=9;                           // cuántas caben a la vista en cada riel
 function railGeom(side){                    // side 0 = izquierda, 1 = derecha
-  const u=U(), n=Math.max(S.imgs.length,1);
-  const th=Math.min(96*u, (H*.62)/n - 10*u), gap=10*u;
-  const total=n*th+(n-1)*gap;
-  const x = side ? W-th/2-30*u : th/2+30*u;
-  return { u, n, th, gap, y0:H/2-total/2+th/2, x };
+  const u=U(), n=Math.max(Math.min(S.imgs.length, RAIL_MAX),1);
+  const th=clamp((H*.60)/n - 9*u, 34*u, 92*u), gap=Math.max(6*u, th*.12);
+  const alto=n*th+(n-1)*gap;
+  const x = side ? W-th/2-28*u : th/2+28*u;
+  return { u, n, th, gap, y0:H*.46-alto/2+th/2, x, total:S.imgs.length };
 }
 function railItemPos(side,i){
   const g=railGeom(side);
@@ -958,7 +1039,7 @@ function drawRails(){
     ctx.globalAlpha=.5; ctx.strokeStyle="rgba(18,224,208,.5)"; ctx.lineWidth=1.4*u;
     ctx.beginPath(); ctx.moveTo(g.x, g.y0-g.th*.8); ctx.lineTo(g.x, g.y0+(g.n-1)*(g.th+g.gap)+g.th*.8); ctx.stroke();
     ctx.globalAlpha=1;
-    for(let i=0;i<S.imgs.length;i++){
+    for(let i=0;i<g.n;i++){
       const p=railItemPos(side,i), taken = JV.slot[side] && JV.slot[side].i===i;
       const s=g.th, ang=t*(side?-.6:.6)+i;
       ctx.save(); ctx.translate(p.x,p.y);
@@ -983,6 +1064,10 @@ function drawRails(){
     // etiqueta de la mano
     ctx.fillStyle="rgba(18,224,208,.85)"; ctx.font=`700 ${11*u}px DM Sans, sans-serif`; ctx.textAlign="center";
     ctx.fillText(side?"MANO DERECHA":"MANO IZQUIERDA", g.x, g.y0-g.th*.95);
+    if(g.total>g.n){
+      ctx.fillStyle="rgba(255,176,32,.9)"; ctx.font=`700 ${10*u}px DM Sans, sans-serif`;
+      ctx.fillText("+"+(g.total-g.n)+" más", g.x, g.y0+(g.n-1)*(g.th+g.gap)+g.th*.95);
+    }
     ctx.textAlign="left";
   }
 }
@@ -1108,7 +1193,212 @@ function drawIronHUD(){
   });
   ctx.globalAlpha=1;
 }
+/* ============ HUD SOBRE TU CARA ============ */
+function drawFaceHUD(){
+  const F=S.faceLM; if(!F || !F.length) return;
+  const u=U(), t=performance.now()/1000;
+  const X=i=>px(F[i]), Y=i=>py(F[i]);
+  let x0=1e9,y0=1e9,x1=-1e9,y1=-1e9;
+  for(const p of F){ const a=px(p), b=py(p);
+    if(a<x0)x0=a; if(a>x1)x1=a; if(b<y0)y0=b; if(b>y1)y1=b; }
+  const fw=x1-x0, fh=y1-y0;
+
+  /* contorno del rostro */
+  ctx.globalCompositeOperation="lighter";
+  ctx.strokeStyle="rgba(18,224,208,.85)"; ctx.lineWidth=1.8*u;
+  ctx.shadowBlur=16*u; ctx.shadowColor="rgba(18,224,208,.8)";
+  const OVAL = FaceLandmarker.FACE_LANDMARKS_FACE_OVAL || [];
+  ctx.beginPath();
+  for(const c of OVAL){
+    const a=F[c.start], b=F[c.end]; if(!a||!b) continue;
+    ctx.moveTo(px(a),py(a)); ctx.lineTo(px(b),py(b));
+  }
+  ctx.stroke(); ctx.shadowBlur=0;
+
+  /* malla ligera de puntos */
+  ctx.fillStyle="rgba(18,224,208,.35)";
+  for(let i=0;i<F.length;i+=9){ ctx.fillRect(px(F[i])-1*u, py(F[i])-1*u, 2*u, 2*u); }
+  ctx.globalCompositeOperation="source-over";
+
+  /* barrido vertical sobre la cara */
+  const sy=y0+((t*.32)%1)*fh;
+  ctx.save();
+  ctx.beginPath(); ctx.ellipse((x0+x1)/2,(y0+y1)/2, fw*.56, fh*.56, 0,0,7); ctx.clip();
+  const g=ctx.createLinearGradient(0,sy-26*u,0,sy+26*u);
+  g.addColorStop(0,"rgba(18,224,208,0)"); g.addColorStop(.5,"rgba(18,224,208,.35)"); g.addColorStop(1,"rgba(18,224,208,0)");
+  ctx.fillStyle=g; ctx.fillRect(x0-fw,sy-26*u, fw*3, 52*u);
+  ctx.fillStyle="rgba(180,255,250,.8)"; ctx.fillRect(x0-fw,sy-1*u, fw*3, 2*u);
+  ctx.restore();
+
+  /* retículas en los ojos */
+  const iris = F.length>=478;
+  let ojos = iris ? [[468,469,471],[473,474,476]] : [[33,133,159],[362,263,386]];
+  // el que queda más a la izquierda de la pantalla es el ojo izquierdo (vista en espejo)
+  if(X(ojos[0][0]) > X(ojos[1][0])) ojos = [ojos[1], ojos[0]];
+  ojos.forEach((idx,k)=>{
+    const cx=iris? X(idx[0]) : (X(idx[0])+X(idx[1]))/2;
+    const cy=iris? Y(idx[0]) : (Y(idx[0])+Y(idx[1]))/2;
+    const r=Math.max(iris? Math.hypot(X(idx[1])-X(idx[2]), Y(idx[1])-Y(idx[2]))*3.2
+                          : Math.hypot(X(idx[0])-X(idx[1]), Y(idx[0])-Y(idx[1]))*.75, 16*u);
+    ctx.globalCompositeOperation="lighter";
+    ctx.strokeStyle="rgba(18,224,208,.9)"; ctx.lineWidth=1.6*u;
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,7); ctx.stroke();
+    ctx.strokeStyle="rgba(255,176,32,.9)"; ctx.lineWidth=2.2*u;
+    for(let a=0;a<3;a++){
+      const s=t*(a%2?-1.5:1.9)+a*2.1;
+      ctx.beginPath(); ctx.arc(cx,cy,r*(1.35+a*.28), s, s+1.0); ctx.stroke();
+    }
+    ctx.strokeStyle="rgba(180,255,250,.75)"; ctx.lineWidth=1.1*u;
+    ctx.beginPath();
+    ctx.moveTo(cx-r*1.9,cy); ctx.lineTo(cx-r*.5,cy); ctx.moveTo(cx+r*.5,cy); ctx.lineTo(cx+r*1.9,cy);
+    ctx.moveTo(cx,cy-r*1.9); ctx.lineTo(cx,cy-r*.5); ctx.moveTo(cx,cy+r*.5); ctx.lineTo(cx,cy+r*1.9);
+    ctx.stroke();
+    ctx.globalCompositeOperation="source-over";
+    ctx.fillStyle="#12e0d0"; ctx.font=`700 ${9.5*u}px DM Sans, sans-serif`; ctx.textAlign="center";
+    ctx.fillText(k?"ÓPTICA DER":"ÓPTICA IZQ", cx, cy-r*2.2);
+    ctx.textAlign="left";
+  });
+
+  /* corchetes del objetivo */
+  const bx=x0-fw*.16, by=y0-fh*.16, bw=fw*1.32, bh=fh*1.32, c=Math.min(bw,bh)*.16;
+  ctx.strokeStyle="#ffb020"; ctx.lineWidth=2.6*u;
+  [[bx,by,1,1],[bx+bw,by,-1,1],[bx,by+bh,1,-1],[bx+bw,by+bh,-1,-1]].forEach(([x,y,sx,sy2])=>{
+    ctx.beginPath(); ctx.moveTo(x, y+sy2*c); ctx.lineTo(x,y); ctx.lineTo(x+sx*c, y); ctx.stroke();
+  });
+
+  /* etiquetas con guía */
+  const tag=(tx,ty,ax,ay,txt,col)=>{
+    ctx.strokeStyle=col; ctx.lineWidth=1.3*u;
+    ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(tx, ty); ctx.stroke();
+    ctx.font=`700 ${10.5*u}px DM Sans, sans-serif`;
+    const w=ctx.measureText(txt).width+18*u, dir = tx<W/2 ? -1 : 1;
+    const rx = dir<0 ? tx-w : tx;
+    ctx.fillStyle="rgba(4,16,21,.85)"; rrect(rx, ty-11*u, w, 22*u, 5*u); ctx.fill();
+    ctx.strokeStyle=col; rrect(rx, ty-11*u, w, 22*u, 5*u); ctx.stroke();
+    ctx.fillStyle=col; ctx.fillText(txt, rx+9*u, ty+4*u);
+  };
+  tag(bx-30*u, by+bh*.28, x0+fw*.06, y0+fh*.30, "USUARIO: JARLYN", "#12e0d0");
+  tag(bx+bw+30*u, by+bh*.20, x1-fw*.06, y0+fh*.22, "ROSTRO OK · 100%", "#ffb020");
+  tag(bx+bw+30*u, by+bh*.78, x1-fw*.10, y0+fh*.80, VOZ.on?"VOZ: ACTIVA":"VOZ: MUDA", "#12e0d0");
+  ctx.textAlign="left";
+}
+
+/* ============ NÚCLEO Y MEDIDORES ============ */
+function widgets(){
+  const r=Math.min(W,H)*.062, y=H*.735, d=new Date();
+  const hora=d.toLocaleTimeString("es-PE",{hour:"2-digit",minute:"2-digit"});
+  return [
+    { k:"hora", x:W*.17, y, r, tit:"HORA",  val:hora, p:(d.getMinutes()/60),
+      voz:"Son las "+hora },
+    { k:"fecha",x:W*.31, y, r, tit:"FECHA", val:d.getDate()+"", p:(d.getDate()/31),
+      voz:"Hoy es "+d.toLocaleDateString("es-PE",{weekday:"long",day:"numeric",month:"long"}) },
+    { k:"imgs", x:W*.69, y, r, tit:"IMÁGENES", val:String(S.imgs.length), p:clamp(S.imgs.length/12,.08,1),
+      voz:S.imgs.length+" imágenes cargadas" },
+    { k:"wsp",  x:W*.83, y, r, tit:"WHATSAPP", val:"933", p:.83,
+      voz:"WhatsApp: nueve tres tres, siete dos cuatro, uno siete ocho" },
+  ];
+}
+function drawGauge(w, act){
+  const u=U(), t=performance.now()/1000;
+  ctx.save(); ctx.translate(w.x,w.y);
+  ctx.strokeStyle= act? "#ffb020":"rgba(18,224,208,.55)"; ctx.lineWidth=1.5*u;
+  for(let i=0;i<36;i++){                                  // ticks
+    const a=i/36*Math.PI*2, l = i%3? .06 : .13;
+    ctx.globalAlpha= act? .9:.5;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a)*w.r*(1-l), Math.sin(a)*w.r*(1-l));
+    ctx.lineTo(Math.cos(a)*w.r, Math.sin(a)*w.r); ctx.stroke();
+  }
+  ctx.globalAlpha=1;
+  ctx.strokeStyle="rgba(18,224,208,.25)"; ctx.lineWidth=5*u;
+  ctx.beginPath(); ctx.arc(0,0,w.r*.78,0,7); ctx.stroke();
+  ctx.strokeStyle= act? "#ffb020":"#12e0d0"; ctx.lineWidth=5*u; ctx.lineCap="round";
+  ctx.shadowBlur=act?20*u:10*u; ctx.shadowColor=ctx.strokeStyle;
+  ctx.beginPath(); ctx.arc(0,0,w.r*.78, -Math.PI/2, -Math.PI/2 + w.p*Math.PI*2); ctx.stroke();
+  ctx.shadowBlur=0; ctx.lineCap="butt";
+  ctx.strokeStyle= act? "rgba(255,176,32,.8)":"rgba(18,224,208,.5)"; ctx.lineWidth=1.4*u;
+  const a2=t*(act?2.4:.9);
+  ctx.beginPath(); ctx.arc(0,0,w.r*.55,a2,a2+1.5); ctx.stroke();
+  ctx.textAlign="center";
+  ctx.fillStyle= act? "#ffb020":"#12e0d0"; ctx.font=`800 ${w.r*.42}px Syne, sans-serif`;
+  ctx.fillText(w.val, 0, w.r*.15);
+  ctx.font=`700 ${9.5*u}px DM Sans, sans-serif`; ctx.fillStyle="rgba(180,230,230,.85)";
+  ctx.fillText(w.tit, 0, w.r*1.32);
+  ctx.textAlign="left"; ctx.restore();
+}
+function drawCore(act){
+  const u=U(), t=performance.now()/1000;
+  const cx=W/2, cy=H*.735, R=Math.min(W,H)*.115;
+  ctx.save(); ctx.translate(cx,cy);
+  ctx.globalCompositeOperation="lighter";
+  const g=ctx.createRadialGradient(0,0,0,0,0,R*1.5);
+  g.addColorStop(0, act?"rgba(255,176,32,.5)":"rgba(18,224,208,.42)");
+  g.addColorStop(1,"rgba(18,224,208,0)");
+  ctx.fillStyle=g; ctx.beginPath(); ctx.arc(0,0,R*1.5,0,7); ctx.fill();
+  const col = act? "#ffb020" : "#12e0d0";
+  for(let k=0;k<4;k++){
+    const rr=R*(.55+k*.16), sp=t*(k%2?-1:1)*(.5+k*.35);
+    ctx.strokeStyle=col; ctx.lineWidth=(k===1?4:2)*u; ctx.globalAlpha=.85-k*.12;
+    ctx.beginPath(); ctx.arc(0,0,rr, sp, sp+(k===3?5.4:2.2+k*.5)); ctx.stroke();
+  }
+  ctx.globalAlpha=1;
+  ctx.strokeStyle="rgba(180,255,250,.8)"; ctx.lineWidth=1.2*u;
+  for(let i=0;i<48;i++){
+    const a=i/48*Math.PI*2, l=i%4?.04:.09;
+    ctx.globalAlpha=i%4?.35:.8;
+    ctx.beginPath(); ctx.moveTo(Math.cos(a)*R*1.16,Math.sin(a)*R*1.16);
+    ctx.lineTo(Math.cos(a)*R*(1.16+l),Math.sin(a)*R*(1.16+l)); ctx.stroke();
+  }
+  ctx.globalAlpha=1;
+  const pulso=.86+Math.sin(t*2.4)*.09;
+  const cg=ctx.createRadialGradient(0,0,0,0,0,R*.42*pulso);
+  cg.addColorStop(0,"#eafffd"); cg.addColorStop(.5, col); cg.addColorStop(1,"rgba(18,224,208,0)");
+  ctx.fillStyle=cg; ctx.beginPath(); ctx.arc(0,0,R*.42*pulso,0,7); ctx.fill();
+  ctx.globalCompositeOperation="source-over";
+  ctx.textAlign="center"; ctx.fillStyle="#04141a"; ctx.font=`800 ${R*.24}px Syne, sans-serif`;
+  ctx.fillText("TOTAL", 0, R*.08);
+  ctx.fillStyle=col; ctx.font=`700 ${10*u}px DM Sans, sans-serif`;
+  ctx.fillText(PRICE, 0, R*1.42);
+  ctx.textAlign="left"; ctx.restore();
+}
+function drawPanelDatos(){
+  const u=U(), t=performance.now()/1000;
+  // barras de telemetría abajo a la izquierda
+  const bx=30*u, by=H*.90, bw=Math.min(W*.20, 240*u), bh=46*u;
+  ctx.strokeStyle="rgba(18,224,208,.35)"; ctx.lineWidth=1.2*u;
+  rrect(bx,by-bh,bw,bh,8*u); ctx.stroke();
+  const n=26;
+  for(let i=0;i<n;i++){
+    const v=(Math.sin(t*3+i*.6)*.5+.5)*.8+.15;
+    ctx.fillStyle= i%5? "rgba(18,224,208,.65)":"rgba(255,176,32,.9)";
+    const w2=bw/n-1.5*u;
+    ctx.fillRect(bx+6*u+i*(bw-12*u)/n, by-6*u-v*(bh-14*u), w2, v*(bh-14*u));
+  }
+  ctx.fillStyle="rgba(180,230,230,.7)"; ctx.font=`700 ${9*u}px DM Sans, sans-serif`;
+  ctx.fillText("SEÑAL", bx+6*u, by-bh-6*u);
+}
+function hoverWidgets(){
+  const ws=widgets(), now=performance.now();
+  let sobre=null;
+  for(const h of S.hands){
+    const p={x:px(h.lm[8]), y:py(h.lm[8])};
+    for(const w of ws) if(Math.hypot(w.x-p.x, w.y-p.y) < w.r*1.15) sobre=w.k;
+    if(Math.hypot(W/2-p.x, H*.735-p.y) < Math.min(W,H)*.115) sobre="core";
+  }
+  if(sobre && sobre!==S.hover && now-S.hoverT>1400){
+    S.hover=sobre; S.hoverT=now;
+    const w=ws.find(o=>o.k===sobre);
+    say(w ? w.voz : "Trío maletero drywalero. Dos mil cuarenta y nueve soles.", true);
+    beep(900,.06);
+  } else if(!sobre) S.hover=null;
+  return { ws, sobre };
+}
 function drawIron(){
+  const {ws, sobre} = hoverWidgets();
+  drawCore(sobre==="core");
+  ws.forEach(w=>drawGauge(w, sobre===w.k));
+  drawPanelDatos();
+  if(S.faceOn) drawFaceHUD();
   drawRails();
   drawHolo(0); drawHolo(1);
   S.hands.forEach((h,i)=>drawReticle(h, S.railFor[i]||0));
@@ -1191,7 +1481,16 @@ function loop(){
       const r = landmarker.detectForVideo(video, now);
       S.hands = (r.landmarks||[]).map(analyze);
     }catch(e){ /* frame perdido, seguimos */ }
+    /* rostro: solo en modo IRON MAN y un frame sí, otro no */
+    S.frame++;
+    if(faceLandmarker && S.faceOn && S.mode==="ironman" && (S.frame&1)===0){
+      try{
+        const fr = faceLandmarker.detectForVideo(video, now);
+        S.faceLM = (fr.faceLandmarks && fr.faceLandmarks[0]) || null;
+      }catch(e){}
+    }
   }
+  if(S.mode!=="ironman") S.faceLM=null;
 
   drawBG();
 
@@ -1415,6 +1714,7 @@ function setMode(m){
   if(m==="piezas") buildPieces();
   if(m==="ironman"){
     JV.slot=[null,null]; JV.log=[]; S.showCard=false;   // la ficha se abre con la palma
+    initFace();
     say("Sistema TOTAL en línea. Toma una imagen con cualquier mano.", true);
   }
   toast("Modo "+m);
@@ -1449,6 +1749,13 @@ setLegend(true, true);
 $("#bSound").onclick=e=>{ S.sound=!S.sound; e.currentTarget.textContent=S.sound?"🔈":"🔇"; if(S.sound) beep(700,.08); };
 $("#bFull").onclick=()=>{ document.fullscreenElement? document.exitFullscreen() : document.documentElement.requestFullscreen?.(); };
 $("#bLoad").onclick=()=>$("#file").click();
+$("#bFolder").onclick=()=>$("#folder").click();
+$("#bFace").onclick=e=>{
+  S.faceOn=!S.faceOn; e.currentTarget.classList.toggle("on",S.faceOn);
+  e.currentTarget.textContent=S.faceOn?"🙂":"🚫";
+  if(S.faceOn){ initFace(); toast("Escáner de rostro encendido"); }
+  else { S.faceLM=null; toast("Escáner de rostro apagado"); }
+};
 $("#bShot").onclick=shot;
 $("#bReset").onclick=resetPieces;
 $("#bRec").onclick=toggleRec;
@@ -1482,18 +1789,38 @@ function shot(){
     setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 4000);
   }, "image/png");
 }
-/* carga de imágenes propias */
-$("#file").onchange=e=>useFiles(e.target.files);
+/* carga de imágenes propias (archivos o carpeta entera) */
+$("#file").onchange   = e=>useFiles(e.target.files);
+$("#folder").onchange = e=>useFiles(e.target.files);
 async function useFiles(files){
-  const list=[...files].filter(f=>f.type.startsWith("image/")).slice(0,8);
+  const list=[...files].filter(f=>f.type.startsWith("image/")).slice(0,MAX_CARGA);
   if(!list.length) return;
-  const imgs=await Promise.all(list.map(f=>loadImg(URL.createObjectURL(f))));
-  S.imgs=imgs.filter(Boolean);
+  toast("Cargando "+list.length+" imagen(es)…");
+  const imgs=[], nombres=[];
+  for(const f of list){
+    const im=await loadImg(URL.createObjectURL(f));
+    if(im){ imgs.push(im); nombres.push(limpiaNombre(f.name)); }
+  }
+  if(!imgs.length) return toast("No pude leer esas imágenes");
+  S.imgs=imgs;
+  SLIDES.length=0; imgs.forEach((_,i)=>SLIDES.push(metaDe(nombres[i], i)));
   S.pieceCache={}; S.pieces=[]; S.pieceGrab=[null,null];
-  SLIDES.length=0;
-  list.forEach((f,i)=>SLIDES.push({ title:"COMBO TOTAL", sub:f.name.replace(/\.[^.]+$/,""),
-    specs:["Imagen cargada desde tu PC","Desliza la mano para cambiar","Pinza para mover y agrandar"] }));
-  S.slide=0; toast(S.imgs.length+" imagen(es) cargadas");
+  JV.slot=[null,null]; S.slide=0; S.dual=0;
+  toast(imgs.length+" imagen(es) cargadas");
+  say(imgs.length+" imágenes cargadas.", true);
+  /* guardarlas para la próxima vez */
+  try{
+    await idbClear();
+    for(let i=0;i<imgs.length;i++){
+      const blob=await shrink(imgs[i]);
+      if(blob) await idbAdd({ blob, nombre:nombres[i] });
+    }
+    toast("Guardadas en este navegador");
+  }catch(e){ console.warn("no pude guardar", e); }
+}
+async function borrarGuardadas(){
+  await idbClear();
+  toast("Imágenes guardadas borradas · recarga la página");
 }
 ["dragenter","dragover"].forEach(t=>addEventListener(t,e=>{e.preventDefault();$("#drop").classList.add("on")}));
 ["dragleave","drop"].forEach(t=>addEventListener(t,e=>{e.preventDefault();
@@ -1556,6 +1883,22 @@ async function start(demo){
 }
 $("#go").onclick=()=>start(false);
 $("#demo").onclick=()=>start(true);
+$("#pick").onclick=()=>$("#file").click();
+
+/* aviso de imágenes guardadas en la pantalla de inicio */
+(async()=>{
+  const g=await idbAll();
+  const el=$("#saved"); if(!el) return;
+  if(g && g.length){
+    el.innerHTML = "Tienes <b>"+g.length+"</b> imagen(es) guardadas en este navegador."+
+                   "<a id='wipe'>Borrar</a>";
+    el.querySelector("#wipe").onclick=async()=>{
+      await borrarGuardadas(); el.textContent="Borradas. Recarga la página.";
+    };
+  } else {
+    el.innerHTML = "Puedes usar las imágenes del repo o cargar las tuyas desde tu PC.";
+  }
+})();
 
 if(!isSecureContext) setStatus("Ábrelo en <b>https://</b> — el navegador no da la cámara en http.", true);
 

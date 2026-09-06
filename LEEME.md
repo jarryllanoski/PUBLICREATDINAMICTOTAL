@@ -54,11 +54,33 @@ retículas giratorias sobre cada mano, telemetría en vivo y consola que escribe
 - Botón **🗣️** (tecla `J`) enciende y apaga la voz. Usa la voz en español que tenga tu
   navegador; en Chrome de escritorio y Android ya viene instalada.
 
-### Tu lista de imágenes
+### HUD sobre tu cara 🙂
 
-La app busca `combo-1.jpg`, `combo-2.jpg`, `combo-3.jpg` … hasta `combo-8.jpg` y usa las que existan.
-**Para sumar imágenes solo súbelas al repo con ese nombre** — aparecen solas en los rieles, en el
-carrusel y en el despiece. También puedes cargarlas al vuelo con 🖼️ o arrastrándolas.
+El modo detecta tu rostro (468 puntos) y te dibuja encima el visor:
+
+- Contorno de la cara con malla de puntos y **línea de escaneo** que te barre.
+- **Retículas giratorias sobre cada ojo** con mira en cruz y rótulo ÓPTICA IZQ / ÓPTICA DER.
+- Corchetes de objetivo alrededor de la cabeza y etiquetas con línea guía:
+  `USUARIO: JARLYN`, `ROSTRO OK · 100%`, `VOZ: ACTIVA`.
+- El escáner facial se descarga solo la primera vez que entras al modo (~3 MB) y corre
+  un cuadro sí y otro no para no cargar la PC. Botón **🙂** para apagarlo si va lento.
+
+### Núcleo y medidores
+
+Abajo va el **núcleo** con anillos girando y, a los lados, **cuatro medidores**: HORA, FECHA,
+IMÁGENES y WHATSAPP. **Apunta con el índice a uno y la voz te lo lee**; apunta al núcleo
+y te dice el combo y el precio.
+
+## Cargar TUS imágenes desde la PC
+
+- Botón **🖼️** = elegir archivos sueltos · botón **📁** = cargar **una carpeta entera** de golpe.
+  También puedes arrastrar imágenes a la ventana, o usar **🖼️ Cargar mis imágenes** en la pantalla de inicio.
+- Hasta **24 imágenes**. Cada una toma su nombre de archivo (`taladro_total_1.jpg` → "taladro total 1")
+  y ese nombre sale en los rieles y **lo dice la voz** cuando la sacas.
+- **Quedan guardadas en tu navegador**: la próxima vez que abras la app aparecen solas.
+  La pantalla de inicio dice cuántas tienes guardadas y trae un enlace **Borrar**.
+- Si no cargaste ninguna, usa las `combo-1.jpg` … `combo-8.jpg` del repo.
+- Las imágenes se guardan reducidas a 1400 px, así que 24 imágenes ocupan poco.
 
 ## Grabar pantalla 🎥
 
