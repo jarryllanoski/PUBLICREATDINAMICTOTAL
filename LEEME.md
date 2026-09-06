@@ -45,10 +45,23 @@ Todo se procesa en el navegador: el video **no sale** de la computadora.
 Interfaz tipo JARVIS **con voz en español**: corchetes de pantalla, línea de barrido,
 retículas giratorias sobre cada mano, telemetría en vivo y consola que escribe lo que va diciendo.
 
-- A cada lado aparece un **riel con toda tu lista de imágenes**.
-- **Pinza sobre un ítem del riel izquierdo → lo saca tu mano izquierda; el riel derecho, tu mano derecha.**
-  Cada mano sostiene su propio holograma y lo mueve por la pantalla; los dos a la vez.
-- **✊ Puño** con esa mano → devuelve su holograma al riel.
+### Cómo jalar las imágenes del costado
+
+A cada lado hay un **riel con tu lista de imágenes**. Hay dos formas de sacar una:
+
+1. **Acerca la mano** (basta la punta del índice) a la miniatura. Se enciende un
+   **anillo dorado que se va llenando** y sale el nombre de la imagen. Mantén la mano
+   ahí **1 segundo** y la imagen salta sola al centro. Es la forma fácil.
+2. **Pinza**: junta pulgar e índice justo encima de la miniatura y sale al instante,
+   pegada a tu mano; muévela donde quieras y abre los dedos para soltarla.
+
+El riel de la izquierda es de tu mano izquierda y el de la derecha de tu mano derecha,
+así que **puedes tener una imagen en cada mano al mismo tiempo**.
+Para mover una que ya está suelta, haz pinza encima de ella.
+**✊ Puño** con esa mano → la devuelve a su riel.
+
+> Los rieles y los medidores se dibujan **dentro del área que ve la cámara**, no en los
+> bordes de la pantalla, para que tu mano siempre pueda alcanzarlos.
 - **✋ Palma** → abre la ficha y **la voz lee el combo y el precio**.
 - **👍 Pulgar** → la voz dicta el número de WhatsApp.
 - Botón **🗣️** (tecla `J`) enciende y apaga la voz. Usa la voz en español que tenga tu

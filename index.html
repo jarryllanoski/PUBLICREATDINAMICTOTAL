@@ -145,7 +145,7 @@ body.iron #legend h4{color:#ffb020}
   <div class="g"><i>✋</i><span><b>Palma abierta</b> · muestra u oculta la ficha</span></div>
   <div class="g"><i>🤏</i><span><b>Pinza</b> · agarra y mueve el producto</span></div>
   <div class="g"><i>🧩</i><span><b>Modo Piezas</b> · saca cada herramienta del cartel, una con cada mano</span></div>
-  <div class="g"><i>🦾</i><span><b>Modo Iron Man</b> · pinza en el riel y sacas la imagen; puño la devuelve</span></div>
+  <div class="g"><i>🦾</i><span><b>Modo Iron Man</b> · acerca la mano a una imagen del riel y <b>mantenla 1 seg</b> (o haz pinza) para sacarla; puño la devuelve</span></div>
   <div class="g"><i>🤏🤏</i><span><b>Dos pinzas</b> · agranda y rota</span></div>
   <div class="g"><i>👉</i><span><b>Deslizar</b> mano abierta · cambia de imagen</span></div>
   <div class="g"><i>✊</i><span><b>Puño</b> · carga energía, abre para explotar</span></div>
@@ -1012,7 +1012,8 @@ function say(txt, forzar){
     speechSynthesis.speak(u);
   }catch(e){}
 }
-const JV = { log:[], scan:0, boot:0, slot:[null,null], railFor:[] };
+const JV = { log:[], scan:0, boot:0, slot:[null,null], railFor:[], hover:[null,null] };
+const DWELL = 900;    // ms con la mano encima para que la imagen salte sola
 function hudLog(t){
   JV.log.push({ t:t.toUpperCase().slice(0,58), born:performance.now() });
   if(JV.log.length>6) JV.log.shift();
@@ -1020,12 +1021,26 @@ function hudLog(t){
 
 /* --- rieles: la lista de imágenes, uno a cada lado --- */
 const RAIL_MAX=9;                           // cuántas caben a la vista en cada riel
+/* Los rieles van DENTRO del área que ve la cámara: si quedaran en la franja
+   negra del encuadre, tu mano nunca podría alcanzarlos.                     */
+/* rectángulo que la cámara realmente ve: todo lo agarrable vive aquí dentro */
+function areaVideo(){
+  const vivo = !S.demo && video.readyState>=2 && MAP.dw>0;
+  return {
+    L: vivo ? Math.max(MAP.ox,0)        : 0,
+    R: vivo ? Math.min(MAP.ox+MAP.dw,W) : W,
+    T: vivo ? Math.max(MAP.oy,0)        : 0,
+    B: vivo ? Math.min(MAP.oy+MAP.dh,H) : H,
+  };
+}
 function railGeom(side){                    // side 0 = izquierda, 1 = derecha
   const u=U(), n=Math.max(Math.min(S.imgs.length, RAIL_MAX),1);
-  const th=clamp((H*.60)/n - 9*u, 34*u, 92*u), gap=Math.max(6*u, th*.12);
+  const {L,R,T,B}=areaVideo();
+  const alto0=(B-T);
+  const th=clamp((alto0*.60)/n - 9*u, 34*u, 92*u), gap=Math.max(6*u, th*.12);
   const alto=n*th+(n-1)*gap;
-  const x = side ? W-th/2-28*u : th/2+28*u;
-  return { u, n, th, gap, y0:H*.46-alto/2+th/2, x, total:S.imgs.length };
+  const x = side ? R-th/2-22*u : L+th/2+22*u;
+  return { u, n, th, gap, y0:(T+B)/2 - alto/2 + th/2 - alto0*.04, x, total:S.imgs.length };
 }
 function railItemPos(side,i){
   const g=railGeom(side);
@@ -1060,6 +1075,28 @@ function drawRails(){
       ctx.fillStyle="#12e0d0"; ctx.font=`700 ${10*u}px DM Sans, sans-serif`; ctx.textAlign="center";
       ctx.fillText(String(i+1).padStart(2,"0"), 0, s/2+16*u); ctx.textAlign="left";
       ctx.restore();
+
+      /* la que estás por agarrar: anillo que se llena + nombre */
+      const hv=JV.hover[side];
+      if(hv && hv.i===i){
+        const prog=clamp((performance.now()-hv.t0)/DWELL,0,1);
+        ctx.save(); ctx.translate(p.x,p.y);
+        ctx.strokeStyle="rgba(255,176,32,.35)"; ctx.lineWidth=5*u;
+        ctx.beginPath(); ctx.arc(0,0,s*.80,0,7); ctx.stroke();
+        ctx.strokeStyle="#ffb020"; ctx.lineWidth=5*u; ctx.lineCap="round";
+        ctx.shadowBlur=22*u; ctx.shadowColor="#ffb020";
+        ctx.beginPath(); ctx.arc(0,0,s*.80,-Math.PI/2,-Math.PI/2+prog*Math.PI*2); ctx.stroke();
+        ctx.shadowBlur=0; ctx.lineCap="butt";
+        const nom=((SLIDES[i]&&SLIDES[i].sub)||("Imagen "+(i+1))).toUpperCase().slice(0,24);
+        ctx.font=`700 ${11*u}px DM Sans, sans-serif`; ctx.textAlign= side?"right":"left";
+        const tw=ctx.measureText(nom).width+20*u, dir= side?-1:1;
+        const rx = side ? -s*.95-tw : s*.95;
+        ctx.fillStyle="rgba(4,20,26,.92)"; ctx.strokeStyle="#ffb020"; ctx.lineWidth=1.4*u;
+        rrect(rx, -13*u, tw, 26*u, 7*u); ctx.fill(); ctx.stroke();
+        ctx.fillStyle="#ffb020"; ctx.textAlign="left";
+        ctx.fillText(nom, rx+10*u, 4*u);
+        ctx.restore();
+      }
     }
     // etiqueta de la mano
     ctx.fillStyle="rgba(18,224,208,.85)"; ctx.font=`700 ${11*u}px DM Sans, sans-serif`; ctx.textAlign="center";
@@ -1071,10 +1108,16 @@ function drawRails(){
     ctx.textAlign="left";
   }
 }
-function takeFromRail(side, idx, pt){
+function takeFromRail(side, idx, pt, auto){
   const p=railItemPos(side,idx);
-  JV.slot[side]={ i:idx, x:pt?pt.x:p.x, y:pt?pt.y:p.y, s:0, held:true, born:performance.now(),
-                  dx:pt?p.x-pt.x:0, dy:pt?p.y-pt.y:0 };
+  JV.hover[side]=null;
+  if(auto){                                   // salió sola: se coloca a la vista
+    const dx = side ? W*.68 : W*.32;
+    JV.slot[side]={ i:idx, x:dx, y:H*.42, s:0, held:false, born:performance.now(), dx:0, dy:0 };
+  } else {
+    JV.slot[side]={ i:idx, x:pt?pt.x:p.x, y:pt?pt.y:p.y, s:0, held:true, born:performance.now(),
+                    dx:pt?p.x-pt.x:0, dy:pt?p.y-pt.y:0 };
+  }
   const m=SLIDES[idx]||{};
   say((side?"Mano derecha. ":"Mano izquierda. ")+(m.voz||m.sub||"Imagen "+(idx+1)), true);
   sfx.mode(); spawn(p.x,p.y,40,{c:"#ffb020",max:7,fast:true});
@@ -1285,18 +1328,23 @@ function drawFaceHUD(){
 
 /* ============ NÚCLEO Y MEDIDORES ============ */
 function widgets(){
-  const r=Math.min(W,H)*.062, y=H*.735, d=new Date();
+  const A=areaVideo(), an=A.R-A.L, al=A.B-A.T;
+  const r=Math.min(an,al)*.078, y=A.T+al*.80, X=f=>A.L+an*f, d=new Date();
   const hora=d.toLocaleTimeString("es-PE",{hour:"2-digit",minute:"2-digit"});
   return [
-    { k:"hora", x:W*.17, y, r, tit:"HORA",  val:hora, p:(d.getMinutes()/60),
+    { k:"hora", x:X(.18), y, r, tit:"HORA",  val:hora, p:(d.getMinutes()/60),
       voz:"Son las "+hora },
-    { k:"fecha",x:W*.31, y, r, tit:"FECHA", val:d.getDate()+"", p:(d.getDate()/31),
+    { k:"fecha",x:X(.33), y, r, tit:"FECHA", val:d.getDate()+"", p:(d.getDate()/31),
       voz:"Hoy es "+d.toLocaleDateString("es-PE",{weekday:"long",day:"numeric",month:"long"}) },
-    { k:"imgs", x:W*.69, y, r, tit:"IMÁGENES", val:String(S.imgs.length), p:clamp(S.imgs.length/12,.08,1),
+    { k:"imgs", x:X(.67), y, r, tit:"IMÁGENES", val:String(S.imgs.length), p:clamp(S.imgs.length/12,.08,1),
       voz:S.imgs.length+" imágenes cargadas" },
-    { k:"wsp",  x:W*.83, y, r, tit:"WHATSAPP", val:"933", p:.83,
+    { k:"wsp",  x:X(.82), y, r, tit:"WHATSAPP", val:"933", p:.83,
       voz:"WhatsApp: nueve tres tres, siete dos cuatro, uno siete ocho" },
   ];
+}
+function coreGeom(){
+  const A=areaVideo(), an=A.R-A.L, al=A.B-A.T;
+  return { cx:A.L+an*.5, cy:A.T+al*.80, R:Math.min(an,al)*.13 };
 }
 function drawGauge(w, act){
   const u=U(), t=performance.now()/1000;
@@ -1328,7 +1376,7 @@ function drawGauge(w, act){
 }
 function drawCore(act){
   const u=U(), t=performance.now()/1000;
-  const cx=W/2, cy=H*.735, R=Math.min(W,H)*.115;
+  const {cx,cy,R}=coreGeom();
   ctx.save(); ctx.translate(cx,cy);
   ctx.globalCompositeOperation="lighter";
   const g=ctx.createRadialGradient(0,0,0,0,0,R*1.5);
@@ -1383,7 +1431,8 @@ function hoverWidgets(){
   for(const h of S.hands){
     const p={x:px(h.lm[8]), y:py(h.lm[8])};
     for(const w of ws) if(Math.hypot(w.x-p.x, w.y-p.y) < w.r*1.15) sobre=w.k;
-    if(Math.hypot(W/2-p.x, H*.735-p.y) < Math.min(W,H)*.115) sobre="core";
+    const C=coreGeom();
+    if(Math.hypot(C.cx-p.x, C.cy-p.y) < C.R) sobre="core";
   }
   if(sobre && sobre!==S.hover && now-S.hoverT>1400){
     S.hover=sobre; S.hoverT=now;
@@ -1592,15 +1641,29 @@ function loop(){
 
   /* --- IRON MAN: cada mano saca su imagen del riel --- */
   if(S.mode==="ironman"){
+    const tocadas=[false,false];
     S.hands.forEach((h,i)=>{
       const side=S.railFor[i]||0, pin=pinchByHand[i], sl=JV.slot[side];
+      if(!sl){
+        /* apunta o pellizca: el punto activo es la pinza o la punta del índice */
+        const pt = pin || { x:px(h.lm[8]), y:py(h.lm[8]) };
+        const g=railGeom(side);
+        let best=-1, bd=1e9;
+        for(let k=0;k<g.n;k++){
+          const p=railItemPos(side,k);
+          const d=Math.hypot(p.x-pt.x, p.y-pt.y);
+          if(d < p.r*1.25 + 38*U() && d < bd){ bd=d; best=k; }
+        }
+        if(best>=0){
+          tocadas[side]=true;
+          const hv=JV.hover[side];
+          if(!hv || hv.i!==best) JV.hover[side]={ i:best, t0:now };
+          if(pin) takeFromRail(side,best,pt);                       // pinza = inmediato
+          else if(now-JV.hover[side].t0 > DWELL) takeFromRail(side,best,pt,true); // o mantén la mano
+        }
+      }
       if(pin){
-        if(!sl){                                   // ¿pinza sobre un ítem del riel?
-          for(let k=0;k<S.imgs.length;k++){
-            const p=railItemPos(side,k);
-            if(Math.hypot(p.x-pin.x, p.y-pin.y) < p.r+22*U()){ takeFromRail(side,k,pin); break; }
-          }
-        } else {
+        if(sl){
           if(!sl.held){
             const base=Math.min(W,H)*.40*sl.s;
             if(Math.hypot(sl.x-pin.x, sl.y-pin.y) < base*.62){
@@ -1616,7 +1679,8 @@ function loop(){
       } else if(sl){ sl.held=false; }
       if(stabs[i].cur==="fist" && sl && performance.now()-sl.born>700) returnSlot(side);
     });
-  }
+    for(let s=0;s<2;s++) if(!tocadas[s]) JV.hover[s]=null;
+  } else JV.hover=[null,null];
 
   /* --- dos imágenes abiertas: cada mano mueve la suya --- */
   const dualOn = (S.mode==="combo"||S.mode==="efectos") && S.dual>.5 && S.mode!=="ironman";
@@ -1715,7 +1779,7 @@ function setMode(m){
   if(m==="ironman"){
     JV.slot=[null,null]; JV.log=[]; S.showCard=false;   // la ficha se abre con la palma
     initFace();
-    say("Sistema TOTAL en línea. Toma una imagen con cualquier mano.", true);
+    say("Sistema en línea. Acerca la mano a una imagen del costado para sacarla.", true);
   }
   toast("Modo "+m);
   sfx.mode();
@@ -1905,7 +1969,8 @@ if(!isSecureContext) setStatus("Ábrelo en <b>https://</b> — el navegador no d
 /* gancho de depuración */
 window.TH = { S, setMode, spawn, boom, toast, analyze, buildPieces, resetPieces,
   boardBox, pieceHome, piecePos, JV, VOZ, say, railItemPos, toggleRec, stopRec, stabs,
-  toNorm:(X,Y)=>({ x:1-(X-MAP.ox)/MAP.dw, y:(Y-MAP.oy)/MAP.dh }) };
+  toNorm:(X,Y)=>({ x:1-(X-MAP.ox)/MAP.dw, y:(Y-MAP.oy)/MAP.dh }),
+  mapa:()=>({ ...MAP, W, H }), widgets, coreGeom, areaVideo };
 
 loop();
 </script>
